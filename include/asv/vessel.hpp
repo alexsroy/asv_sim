@@ -25,4 +25,9 @@ struct VesselInput {
 VesselState derivative(const VesselState& s, const VesselInput& in,
                        const VesselParams& p);
 
+// Advance the state by dt seconds using classic 4th-order Runge-Kutta.
+// Input is held constant over the step (zero-order hold).
+VesselState step_rk4(const VesselState& s, const VesselInput& in,
+                     const VesselParams& p, double dt);
+
 }  // namespace asv
