@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Core library (headless). Empty for now, filled in during step 2.
-add_library(asv_core src/vessel.cpp)
+add_library(asv_core src/vessel.cpp src/heading_controller.cpp)
 target_include_directories(asv_core PUBLIC include)
 target_compile_options(asv_core PRIVATE -Wall -Wextra -Wpedantic)
 
