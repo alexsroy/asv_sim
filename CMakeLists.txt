@@ -30,3 +30,8 @@ FetchContent_MakeAvailable(googletest)
 enable_testing()
 add_subdirectory(tests)
 add_subdirectory(apps)
+
+option(ASV_BUILD_VIEWER "Build the raylib viewer" ON)
+if(ASV_BUILD_VIEWER)
+  add_subdirectory(viewer)
+endif()
