@@ -11,6 +11,7 @@ add_library(asv_core
   src/vessel.cpp
   src/heading_controller.cpp
   src/los_guidance.cpp
+  src/csv_frame_sink.cpp
 )
 
 target_include_directories(asv_core PUBLIC include)
@@ -28,3 +29,4 @@ FetchContent_MakeAvailable(googletest)
 
 enable_testing()
 add_subdirectory(tests)
+add_subdirectory(apps)
