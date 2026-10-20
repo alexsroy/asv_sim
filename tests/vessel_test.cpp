@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "asv/vessel.hpp"
+#include "asv/math_constants.hpp"
 
 using namespace asv;
 
@@ -18,7 +19,7 @@ TEST(VesselDerivative, HeadingNorthMovesNorth) {
 TEST(VesselDerivative, HeadingEastMovesEast) {
     VesselState s;
     s.u = 2.0;
-    s.psi = M_PI / 2.0;
+    s.psi = kPi / 2.0;
     auto d = derivative(s, {}, {});
     EXPECT_NEAR(d.x, 0.0, 1e-12);
     EXPECT_NEAR(d.y, 2.0, 1e-12);

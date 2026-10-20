@@ -3,6 +3,7 @@
 #include <cmath>
 
 #include "asv/view_transform.hpp"
+#include "asv/math_constants.hpp"
 
 using namespace asv;
 
@@ -59,7 +60,7 @@ TEST(ShipTriangle, HeadingNorthPointsUp) {
 TEST(ShipTriangle, HeadingEastPointsRight) {
     auto v = simple_view();
     auto c = v.to_screen(0, 0);
-    auto t = ship_triangle(v, 0, 0, M_PI / 2.0, 10.0);
+    auto t = ship_triangle(v, 0, 0, kPi / 2.0, 10.0);
     EXPECT_GT(t.nose.x, c.x);
     EXPECT_NEAR(t.nose.y, c.y, 1e-4f);
     EXPECT_GT(t.starboard.y, t.port.y);  // facing east, starboard is south = down

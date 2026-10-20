@@ -7,6 +7,7 @@
 #include "asv/heading_controller.hpp"
 #include "asv/los_guidance.hpp"
 #include "asv/vessel.hpp"
+#include "asv/math_constants.hpp"
 
 using namespace asv;
 
@@ -17,7 +18,7 @@ TEST(LosGuidance, HeadsAlongNorthboundSegment) {
 
 TEST(LosGuidance, HeadsAlongEastboundSegment) {
     LosGuidance g({{0, 0}, {0, 100}}, 20.0, 5.0);
-    EXPECT_NEAR(g.update(0, 10), M_PI / 2.0, 1e-12);
+    EXPECT_NEAR(g.update(0, 10), kPi / 2.0, 1e-12);
 }
 
 TEST(LosGuidance, SteersBackTowardPath) {
@@ -29,7 +30,7 @@ TEST(LosGuidance, SteersBackTowardPath) {
 
 TEST(LosGuidance, LargeCrossTrackApproachesPerpendicular) {
     LosGuidance g({{0, 0}, {100, 0}}, 20.0, 5.0);
-    EXPECT_NEAR(g.update(50, 1e6), -M_PI / 2.0, 1e-3);
+    EXPECT_NEAR(g.update(50, 1e6), -kPi / 2.0, 1e-3);
 }
 
 TEST(LosGuidance, SwitchesToNextSegmentInsideAcceptanceRadius) {
