@@ -2,10 +2,9 @@ include(FetchContent)
 FetchContent_Declare(
   raylib
   URL https://github.com/raysan5/raylib/archive/refs/tags/5.5.tar.gz
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-find_package(raylib REQUIRED)
+FetchContent_MakeAvailable(raylib)
 
 add_library(asv_viewer raylib_viewer_sink.cpp)
 target_include_directories(asv_viewer PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
