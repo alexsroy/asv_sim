@@ -54,3 +54,5 @@ option(ASV_BUILD_VIEWER "Build the raylib viewer" ON)
 if(ASV_BUILD_VIEWER)
   add_subdirectory(viewer)
 endif()
+
+target_sources(asv_core PRIVATE src/target_ship.cpp)

@@ -1,0 +1,9 @@
+# Target ship patrol: box pattern, then a pause, repeating.
+# x = north (m), y = east (m); heading in degrees clockwise from north.
+start 0 0 0 0
+goto  300     0  4  15
+goto  300   300  4  15
+goto    0   300  4  15
+hold   20
+heading 45 3 30     # drift northeast for 30 s
+loop

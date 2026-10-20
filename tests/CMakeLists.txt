@@ -11,3 +11,5 @@ target_link_libraries(asv_tests PRIVATE asv_core GTest::gtest_main)
 
 include(GoogleTest)
 gtest_discover_tests(asv_tests)
+
+target_sources(asv_tests PRIVATE target_ship_test.cpp)

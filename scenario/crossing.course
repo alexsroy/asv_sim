@@ -1,0 +1,6 @@
+# Target crosses the ASV's route going west, then turns back east, repeating.
+# x = north (m), y = east (m); heading in degrees clockwise from north.
+start   100  320  270  3     # 100 m north, 320 m east, heading west at 3 m/s
+goto    100  -120  3  15
+goto    100   320  3  15
+loop

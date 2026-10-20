@@ -10,7 +10,11 @@ then
 ./build.sh            # configure + build
 ./build.sh --clean    # wipe build/ first, then build
 ./test.sh             # run the unit tests
-./run.sh              # launch the viewer
+./run.sh              # launch the viewer,  speed 5, crossing course
+./run.sh 8                  # faster, still crossing
+./run.sh 5 patrol           # shorthand for scenario/patrol.course
+./run.sh 5 scenario/my.course   # or a full path
+./run.sh 5 none             # ASV alone, like the old behavior
 
 
 or manually:
@@ -24,4 +28,7 @@ Tests:
     ctest --test-dir build --output-on-failure
 Running simulation:
 ./build/viewer/sim_viewer
+
+
+
 
