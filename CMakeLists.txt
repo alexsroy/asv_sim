@@ -37,6 +37,8 @@ add_library(asv_core
   src/cpa.cpp
   src/kalman_track.cpp
   src/track_manager.cpp
+  src/encounter.cpp
+  src/heading_planner.cpp
 )
 target_include_directories(asv_core PUBLIC include)
 target_link_libraries(asv_core PUBLIC asv_warnings)

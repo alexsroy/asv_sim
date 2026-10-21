@@ -5,6 +5,7 @@
 #include <fstream>
 #include <cstdio>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <utility>
 #include <variant>
@@ -14,7 +15,9 @@
 #include "asv/contact.hpp"
 #include "asv/cpa.hpp"
 #include "asv/csv_frame_sink.hpp"
+#include "asv/encounter.hpp"
 #include "asv/heading_controller.hpp"
+#include "asv/heading_planner.hpp"
 #include "asv/los_guidance.hpp"
 #include "asv/radar_sensor.hpp"
 #include "asv/target_ship.hpp"
@@ -106,24 +109,16 @@ int main(int argc, char** argv) {
 
     const int n_max = static_cast<int>(600.0 / dt);
     for (int i = 0; i <= n_max; ++i) {
-        const double psi_d = guidance.update(s.x, s.y);
+        const double t = i * dt;
+        const double psi_los = guidance.update(s.x, s.y);
+        double psi_cmd = psi_los;
 
-        VesselInput in;
-        in.u_cmd = 2.0;
-        in.delta = controller.update(psi_d, s.psi, s.r, dt);
+        std::vector<RaylibViewerSink::TrackView> views;
+        char status[192] = "";
+        std::optional<HeadingPlan> plan;
 
-        Frame f;
-        f.t = i * dt;
-        f.vessel_id = kOwnShipId;
-        f.state = s;
-        f.psi_ref = psi_d;
-        f.delta = in.delta;
-        f.u_cmd = in.u_cmd;
-        f.cross_track = guidance.cross_track_error(s.x, s.y);
-        f.segment = guidance.segment();
-
-        // Contacts first, own ship last: the viewer redraws on the primary's
-        // frame, so the targets and sensor contacts must already be up to date.
+        // Sense and track before planning so the COLREGS command uses current
+        // estimates. Target frames are drawn before own-ship (primary redraw).
         if (!targets.empty()) {
             std::vector<TruthTarget> truth;
             truth.reserve(targets.size());
@@ -134,22 +129,20 @@ int main(int argc, char** argv) {
                 truth.push_back({tgt.vessel_id(), tgt.state()});
             }
 
-            radar.update(f.t, s, truth);
-            ais.update(f.t, s, truth);
+            radar.update(t, s, truth);
+            ais.update(t, s, truth);
 
-            std::vector<Contact> batch = radar.poll(f.t);
-            for (const Contact& c : ais.poll(f.t)) batch.push_back(c);
+            std::vector<Contact> batch = radar.poll(t);
+            for (const Contact& c : ais.poll(t)) batch.push_back(c);
             for (const Contact& c : batch) {
-                contacts_csv.write(f.t, c);
+                contacts_csv.write(t, c);
                 viewer.on_contact(c);
             }
-            tracker.process(f.t, batch);
-            tracker.prune(f.t);
+            tracker.process(t, batch);
+            tracker.prune(t);
 
-            std::vector<RaylibViewerSink::TrackView> views;
-            char buf[128];
             if (tracker.size() == 0) {
-                std::snprintf(buf, sizeof buf, "no tracks yet");
+                std::snprintf(status, sizeof status, "no tracks yet");
             } else {
                 const Kinematics own_k = kinematics(s);
                 bool any_risk = false;
@@ -157,11 +150,12 @@ int main(int argc, char** argv) {
                 CpaResult worst{};
                 worst.dcpa = 1e9;
                 int worst_id = -1;
+                Kinematics worst_kin;
 
-                for (const auto& [id, est] : tracker.estimates_at(f.t)) {
+                for (const auto& [id, est] : tracker.estimates_at(t)) {
                     views.push_back({est.kin.x, est.kin.y, est.kin.vx, est.kin.vy,
                                      est.P(0, 0), est.P(0, 1), est.P(1, 1)});
-                    tracks_file << f.t << ',' << id << ',' << est.kin.x << ','
+                    tracks_file << t << ',' << id << ',' << est.kin.x << ','
                                 << est.kin.y << ',' << est.kin.vx << ',' << est.kin.vy
                                 << ',' << est.P(0, 0) << ',' << est.P(0, 1) << ','
                                 << est.P(1, 1) << '\n';
@@ -172,36 +166,60 @@ int main(int argc, char** argv) {
                         if (cpa.dcpa < worst.dcpa) {
                             worst = cpa;
                             worst_id = id;
+                            worst_kin = est.kin;
                         }
                     } else if (cpa.closing) {
                         any_closing = true;
                         if (cpa.dcpa < worst.dcpa) {
                             worst = cpa;
                             worst_id = id;
+                            worst_kin = est.kin;
                         }
                     } else if (worst_id < 0 || cpa.range < worst.range) {
                         worst = cpa;
                         worst_id = id;
+                        worst_kin = est.kin;
                     }
                 }
 
+                const EncounterResult enc = classify_encounter(s, worst_kin);
+                plan = plan_heading(s, psi_los, worst_kin, enc.type);
+                psi_cmd = plan->psi_cmd;
+
+                const char* label = encounter_name(enc.type);
                 if (any_risk) {
-                    std::snprintf(buf, sizeof buf,
-                                  "COLLISION RISK id %d: CPA %.0f m in %.0f s (%zu tracks)",
-                                  worst_id, worst.dcpa, std::max(worst.tcpa, 0.0),
-                                  tracker.size());
+                    std::snprintf(status, sizeof status,
+                                  "RISK id %d %s: CPA %.0f m in %.0f s%s", worst_id,
+                                  label, plan->best.cpa.dcpa,
+                                  std::max(plan->best.cpa.tcpa, 0.0),
+                                  plan->active ? " [avoid]" : "");
                 } else if (any_closing) {
-                    std::snprintf(buf, sizeof buf, "CPA id %d: %.0f m in %.0f s (%zu tracks)",
-                                  worst_id, worst.dcpa, worst.tcpa, tracker.size());
+                    std::snprintf(status, sizeof status,
+                                  "CPA id %d %s: %.0f m in %.0f s (%zu tracks)", worst_id,
+                                  label, worst.dcpa, worst.tcpa, tracker.size());
                 } else {
-                    std::snprintf(buf, sizeof buf,
-                                  "CPA: opening id %d range %.0f m (%zu tracks)", worst_id,
-                                  worst.range, tracker.size());
+                    std::snprintf(status, sizeof status,
+                                  "CPA: opening id %d %s range %.0f m (%zu tracks)",
+                                  worst_id, label, worst.range, tracker.size());
                 }
             }
             viewer.set_tracks(std::move(views));
-            viewer.set_status(buf);
+            viewer.set_status(status);
         }
+
+        VesselInput in;
+        in.u_cmd = 2.0;
+        in.delta = controller.update(psi_cmd, s.psi, s.r, dt);
+
+        Frame f;
+        f.t = t;
+        f.vessel_id = kOwnShipId;
+        f.state = s;
+        f.psi_ref = psi_cmd;
+        f.delta = in.delta;
+        f.u_cmd = in.u_cmd;
+        f.cross_track = guidance.cross_track_error(s.x, s.y);
+        f.segment = guidance.segment();
         csv.on_frame(f);
         viewer.on_frame(f);
 

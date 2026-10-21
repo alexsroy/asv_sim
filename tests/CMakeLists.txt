@@ -9,6 +9,8 @@ add_executable(asv_tests
   cpa_test.cpp
   kalman_track_test.cpp
   track_manager_test.cpp
+  encounter_test.cpp
+  heading_planner_test.cpp
 )
 
 target_link_libraries(asv_tests PRIVATE asv_core GTest::gtest_main)
