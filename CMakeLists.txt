@@ -32,6 +32,8 @@ add_library(asv_core
   src/heading_controller.cpp
   src/los_guidance.cpp
   src/csv_frame_sink.cpp
+  src/radar_sensor.cpp
+  src/ais_sensor.cpp
 )
 target_include_directories(asv_core PUBLIC include)
 target_link_libraries(asv_core PUBLIC asv_warnings)

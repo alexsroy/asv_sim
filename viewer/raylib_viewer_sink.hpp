@@ -1,9 +1,11 @@
 #pragma once
 
+#include <deque>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "asv/contact.hpp"
 #include "asv/frame_sink.hpp"
 #include "asv/los_guidance.hpp"
 #include "asv/view_transform.hpp"
@@ -22,6 +24,9 @@ struct ViewerOptions {
     // each step so they are current when the screen is redrawn.
     int primary_vessel_id = 0;
 
+    // How long (sim seconds) a sensor contact stays on screen, fading out.
+    double contact_fade_s = 8.0;
+
     // Extra world points (x = north, y = east) to include when fitting the
     // view, so contacts that roam outside the route stay on screen.
     std::vector<Waypoint> extra_view_points;
@@ -39,6 +44,10 @@ public:
 
     void on_frame(const Frame& frame) override;
 
+    // Show a sensor contact (radar = green ring, AIS = blue cross) at its
+    // measured position. It fades out over opts.contact_fade_s of sim time.
+    void on_contact(const Contact& contact);
+
     // True once the user closed the window (or pressed Esc).
     bool should_close();
 
@@ -51,12 +60,19 @@ private:
         VesselState state;
     };
 
+    struct ContactView {
+        SensorKind kind;
+        double x, y;     // measured position (north, east)
+        double t_meas;   // for fading
+    };
+
     void draw();
 
     std::vector<Waypoint> route_;
     ViewerOptions opts_;
     ViewTransform view_;
     std::map<int, ShipView> ships_;
+    std::deque<ContactView> contacts_;
     Frame last_frame_;  // latest frame of the primary vessel
     long frame_count_ = 0;
     bool closed_ = false;

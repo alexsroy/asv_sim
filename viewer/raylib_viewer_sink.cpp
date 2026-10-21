@@ -59,6 +59,10 @@ void RaylibViewerSink::on_frame(const Frame& f) {
     if (++frame_count_ % std::max(opts_.frames_per_draw, 1) == 0) draw();
 }
 
+void RaylibViewerSink::on_contact(const Contact& c) {
+    contacts_.push_back({c.kind, c.x, c.y, c.t_meas});
+}
+
 bool RaylibViewerSink::should_close() {
     if (WindowShouldClose()) closed_ = true;
     return closed_;
@@ -80,6 +84,27 @@ void RaylibViewerSink::draw() {
     }
     for (const auto& w : route_) {
         DrawCircleV(to_v2(view_.to_screen(w.x, w.y)), 4.0f, GRAY);
+    }
+
+    // Sensor contacts, fading with age. Radar: green ring. AIS: blue cross.
+    while (!contacts_.empty() &&
+           last_frame_.t - contacts_.front().t_meas > opts_.contact_fade_s) {
+        contacts_.pop_front();
+    }
+    for (const auto& c : contacts_) {
+        const float age = static_cast<float>(last_frame_.t - c.t_meas);
+        const float alpha =
+            std::clamp(1.0f - age / static_cast<float>(opts_.contact_fade_s), 0.0f, 1.0f);
+        const Vector2 p = to_v2(view_.to_screen(c.x, c.y));
+        if (c.kind == SensorKind::Radar) {
+            DrawCircleLines(static_cast<int>(p.x), static_cast<int>(p.y), 5.0f,
+                            Fade(DARKGREEN, alpha));
+        } else {
+            DrawLineV(Vector2{p.x - 5.0f, p.y - 5.0f}, Vector2{p.x + 5.0f, p.y + 5.0f},
+                      Fade(BLUE, alpha));
+            DrawLineV(Vector2{p.x - 5.0f, p.y + 5.0f}, Vector2{p.x + 5.0f, p.y - 5.0f},
+                      Fade(BLUE, alpha));
+        }
     }
 
     // Ships: contacts first, primary last so it ends up on top.

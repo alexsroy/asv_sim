@@ -8,9 +8,12 @@
 #include <variant>
 #include <vector>
 
+#include "asv/ais_sensor.hpp"
+#include "asv/contact.hpp"
 #include "asv/csv_frame_sink.hpp"
 #include "asv/heading_controller.hpp"
 #include "asv/los_guidance.hpp"
+#include "asv/radar_sensor.hpp"
 #include "asv/target_ship.hpp"
 #include "asv/vessel.hpp"
 #include "raylib_viewer_sink.hpp"
@@ -76,8 +79,14 @@ int main(int argc, char** argv) {
         }
     }
 
+    // Sensors watch the target (seeds fixed so runs are repeatable).
+    RadarSensor radar(RadarParams{}, 1);
+    AisSensor ais(AisParams{}, 2);
+
     std::ofstream file("run.csv");
     CsvFrameSink csv(file);
+    std::ofstream contacts_file("contacts.csv");
+    ContactCsvWriter contacts_csv(contacts_file);
     RaylibViewerSink viewer(route, opts);
 
     const int n_max = static_cast<int>(600.0 / dt);
@@ -99,11 +108,24 @@ int main(int argc, char** argv) {
         f.segment = guidance.segment();
 
         // Contacts first, own ship last: the viewer redraws on the primary's
-        // frame, so the target must already be up to date.
+        // frame, so the target and sensor contacts must already be up to date.
         if (target) {
             const Frame tf = target->make_frame();
             csv.on_frame(tf);
             viewer.on_frame(tf);
+
+            // Sensors see ground truth through noise, dropout and latency.
+            const std::vector<TruthTarget> truth{{kTargetId, target->state()}};
+            radar.update(f.t, s, truth);
+            ais.update(f.t, s, truth);
+            auto deliver = [&](const std::vector<Contact>& batch) {
+                for (const auto& c : batch) {
+                    contacts_csv.write(f.t, c);
+                    viewer.on_contact(c);
+                }
+            };
+            deliver(radar.poll(f.t));
+            deliver(ais.poll(f.t));
         }
         csv.on_frame(f);
         viewer.on_frame(f);
@@ -113,6 +135,7 @@ int main(int argc, char** argv) {
         if (target) target->step(dt);
     }
     csv.flush();
+    contacts_file.flush();
 
     viewer.run_until_closed();  // leave the final picture up until closed
     return 0;
