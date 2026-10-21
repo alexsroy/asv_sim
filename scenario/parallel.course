@@ -1,0 +1,7 @@
+# Second traffic ship: runs parallel to the ASV box, north of the route.
+# Pair with crossing.course for a two-target association demo:
+#   ./run.sh 5 crossing parallel
+start   250  -50  90  3
+goto    250   350  3  15
+goto    250   -50  3  15
+loop

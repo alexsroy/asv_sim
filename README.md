@@ -14,6 +14,7 @@ then
 ./run.sh 8                  # faster, still crossing
 ./run.sh 5 patrol           # shorthand for scenario/patrol.course
 ./run.sh 5 scenario/my.course   # or a full path
+./run.sh 5 crossing parallel    # two targets (GNN association)
 ./run.sh 5 none             # ASV alone, like the old behavior
 
 

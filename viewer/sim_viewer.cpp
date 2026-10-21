@@ -5,7 +5,8 @@
 #include <fstream>
 #include <cstdio>
 #include <iostream>
-#include <optional>
+#include <string>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -14,26 +15,22 @@
 #include "asv/cpa.hpp"
 #include "asv/csv_frame_sink.hpp"
 #include "asv/heading_controller.hpp"
-#include "asv/kalman_track.hpp"
 #include "asv/los_guidance.hpp"
 #include "asv/radar_sensor.hpp"
 #include "asv/target_ship.hpp"
+#include "asv/track_manager.hpp"
 #include "asv/vessel.hpp"
 #include "raylib_viewer_sink.hpp"
 
 namespace {
 
 constexpr int kOwnShipId = 0;
-constexpr int kTargetId = 1;
+constexpr int kFirstTargetId = 1;
 
-// Safety zone: flag a risk if the target will pass within this distance...
+// Safety zone: flag a risk if a target will pass within this distance...
 constexpr double kCpaLimit = 30.0;   // [m]
 // ...within this time.
 constexpr double kTcpaLimit = 60.0;  // [s]
-
-// Radar contacts must fall inside this Mahalanobis gate (chi-square, 2 dof,
-// 99%) to update the track.
-constexpr double kRadarGate2 = 9.21;
 
 // World points around each scripted waypoint (plus the start), padded so the
 // target's turns and overshoot stay inside the viewer window.
@@ -54,7 +51,8 @@ std::vector<asv::Waypoint> target_view_points(const asv::Script& script,
 
 }  // namespace
 
-// Usage: sim_viewer [speed] [target_scenario.course]
+// Usage: sim_viewer [speed] [course...]
+//   Multiple .course files load multiple scripted targets (AIS ids 1, 2, ...).
 int main(int argc, char** argv) {
     using namespace asv;
 
@@ -74,34 +72,36 @@ int main(int argc, char** argv) {
     opts.target_fps = std::clamp(static_cast<int>(std::lround(speed / dt)), 5, 120);
     opts.primary_vessel_id = kOwnShipId;
 
-    // Optional scripted target ship.
-    std::optional<TargetShip> target;
-    if (argc > 2) {
+    std::vector<TargetShip> targets;
+    for (int a = 2; a < argc; ++a) {
         try {
-            Script script = parse_script_file(argv[2]);
+            Script script = parse_script_file(argv[a]);
             const VesselState start = script.start.value_or(VesselState{});
             TargetParams tp;
             tp.max_speed = 6.0;
             tp.max_turn_rate = 0.1;  // rad/s; at 3 m/s that's a 30 m turn radius
-            opts.extra_view_points = target_view_points(script, start, 70.0);
-            target.emplace(kTargetId, start, tp, std::move(script));
+            auto pts = target_view_points(script, start, 70.0);
+            opts.extra_view_points.insert(opts.extra_view_points.end(), pts.begin(),
+                                          pts.end());
+            const int id = kFirstTargetId + static_cast<int>(targets.size());
+            targets.emplace_back(id, start, tp, std::move(script));
         } catch (const std::exception& e) {
-            std::cerr << "Failed to load scenario '" << argv[2] << "': " << e.what() << '\n';
+            std::cerr << "Failed to load scenario '" << argv[a] << "': " << e.what()
+                      << '\n';
             return 1;
         }
     }
 
-    // Sensors watch the target (seeds fixed so runs are repeatable).
     RadarSensor radar(RadarParams{}, 1);
     AisSensor ais(AisParams{}, 2);
+    TrackManager tracker;
 
     std::ofstream file("run.csv");
     CsvFrameSink csv(file);
     std::ofstream contacts_file("contacts.csv");
     ContactCsvWriter contacts_csv(contacts_file);
     std::ofstream tracks_file("tracks.csv");
-    tracks_file << "t,x,y,vx,vy,cov_xx,cov_xy,cov_yy,truth_x,truth_y,truth_vx,truth_vy\n";
-    std::optional<KalmanTrack> track;
+    tracks_file << "t,id,x,y,vx,vy,cov_xx,cov_xy,cov_yy\n";
     RaylibViewerSink viewer(route, opts);
 
     const int n_max = static_cast<int>(600.0 / dt);
@@ -123,63 +123,83 @@ int main(int argc, char** argv) {
         f.segment = guidance.segment();
 
         // Contacts first, own ship last: the viewer redraws on the primary's
-        // frame, so the target and sensor contacts must already be up to date.
-        if (target) {
-            const Frame tf = target->make_frame();
-            csv.on_frame(tf);
-            viewer.on_frame(tf);
+        // frame, so the targets and sensor contacts must already be up to date.
+        if (!targets.empty()) {
+            std::vector<TruthTarget> truth;
+            truth.reserve(targets.size());
+            for (auto& tgt : targets) {
+                const Frame tf = tgt.make_frame();
+                csv.on_frame(tf);
+                viewer.on_frame(tf);
+                truth.push_back({tgt.vessel_id(), tgt.state()});
+            }
 
-            // Sensors see ground truth through noise, dropout and latency.
-            const std::vector<TruthTarget> truth{{kTargetId, target->state()}};
             radar.update(f.t, s, truth);
             ais.update(f.t, s, truth);
-            // Placeholder association until the nearest-neighbour associator:
-            // one track, started on the first identified (AIS) contact. AIS is
-            // trusted by id; radar must pass the Mahalanobis gate, which is what
-            // keeps clutter from dragging the track around.
-            auto deliver = [&](const std::vector<Contact>& batch) {
-                for (const auto& c : batch) {
-                    contacts_csv.write(f.t, c);
-                    viewer.on_contact(c);
-                    if (!track) {
-                        if (c.id != -1) track.emplace(c);
-                    } else if (c.id != -1 || track->gate_distance2(c) < kRadarGate2) {
-                        track->update(c);
+
+            std::vector<Contact> batch = radar.poll(f.t);
+            for (const Contact& c : ais.poll(f.t)) batch.push_back(c);
+            for (const Contact& c : batch) {
+                contacts_csv.write(f.t, c);
+                viewer.on_contact(c);
+            }
+            tracker.process(f.t, batch);
+            tracker.prune(f.t);
+
+            std::vector<RaylibViewerSink::TrackView> views;
+            char buf[128];
+            if (tracker.size() == 0) {
+                std::snprintf(buf, sizeof buf, "no tracks yet");
+            } else {
+                const Kinematics own_k = kinematics(s);
+                bool any_risk = false;
+                bool any_closing = false;
+                CpaResult worst{};
+                worst.dcpa = 1e9;
+                int worst_id = -1;
+
+                for (const auto& [id, est] : tracker.estimates_at(f.t)) {
+                    views.push_back({est.kin.x, est.kin.y, est.kin.vx, est.kin.vy,
+                                     est.P(0, 0), est.P(0, 1), est.P(1, 1)});
+                    tracks_file << f.t << ',' << id << ',' << est.kin.x << ','
+                                << est.kin.y << ',' << est.kin.vx << ',' << est.kin.vy
+                                << ',' << est.P(0, 0) << ',' << est.P(0, 1) << ','
+                                << est.P(1, 1) << '\n';
+
+                    const CpaResult cpa = compute_cpa(own_k, est.kin);
+                    if (collision_risk(cpa, kCpaLimit, kTcpaLimit)) {
+                        any_risk = true;
+                        if (cpa.dcpa < worst.dcpa) {
+                            worst = cpa;
+                            worst_id = id;
+                        }
+                    } else if (cpa.closing) {
+                        any_closing = true;
+                        if (cpa.dcpa < worst.dcpa) {
+                            worst = cpa;
+                            worst_id = id;
+                        }
+                    } else if (worst_id < 0 || cpa.range < worst.range) {
+                        worst = cpa;
+                        worst_id = id;
                     }
                 }
-            };
-            deliver(radar.poll(f.t));
-            deliver(ais.poll(f.t));
 
-            // CPA from the TRACKED estimate (what the ASV would really know),
-            // not from ground truth.
-            char buf[96];
-            if (!track) {
-                std::snprintf(buf, sizeof buf, "no track yet");
-            } else {
-                const TrackEstimate est = track->estimate_at(f.t);
-                viewer.set_tracks({RaylibViewerSink::TrackView{
-                    est.kin.x, est.kin.y, est.kin.vx, est.kin.vy,
-                    est.P(0, 0), est.P(0, 1), est.P(1, 1)}});
-
-                const auto& truth_state = target->state();
-                const Kinematics truth_k = kinematics(truth_state);
-                tracks_file << f.t << ',' << est.kin.x << ',' << est.kin.y << ','
-                            << est.kin.vx << ',' << est.kin.vy << ',' << est.P(0, 0)
-                            << ',' << est.P(0, 1) << ',' << est.P(1, 1) << ','
-                            << truth_k.x << ',' << truth_k.y << ',' << truth_k.vx
-                            << ',' << truth_k.vy << '\n';
-
-                const CpaResult cpa = compute_cpa(kinematics(s), est.kin);
-                if (collision_risk(cpa, kCpaLimit, kTcpaLimit)) {
-                    std::snprintf(buf, sizeof buf, "COLLISION RISK: CPA %.0f m in %.0f s",
-                                  cpa.dcpa, std::max(cpa.tcpa, 0.0));
-                } else if (cpa.closing) {
-                    std::snprintf(buf, sizeof buf, "CPA %.0f m in %.0f s", cpa.dcpa, cpa.tcpa);
+                if (any_risk) {
+                    std::snprintf(buf, sizeof buf,
+                                  "COLLISION RISK id %d: CPA %.0f m in %.0f s (%zu tracks)",
+                                  worst_id, worst.dcpa, std::max(worst.tcpa, 0.0),
+                                  tracker.size());
+                } else if (any_closing) {
+                    std::snprintf(buf, sizeof buf, "CPA id %d: %.0f m in %.0f s (%zu tracks)",
+                                  worst_id, worst.dcpa, worst.tcpa, tracker.size());
                 } else {
-                    std::snprintf(buf, sizeof buf, "CPA: opening (range %.0f m)", cpa.range);
+                    std::snprintf(buf, sizeof buf,
+                                  "CPA: opening id %d range %.0f m (%zu tracks)", worst_id,
+                                  worst.range, tracker.size());
                 }
             }
+            viewer.set_tracks(std::move(views));
             viewer.set_status(buf);
         }
         csv.on_frame(f);
@@ -187,7 +207,7 @@ int main(int argc, char** argv) {
 
         if (viewer.should_close() || guidance.finished()) break;
         s = step_rk4(s, in, params, dt);
-        if (target) target->step(dt);
+        for (auto& tgt : targets) tgt.step(dt);
     }
     csv.flush();
     contacts_file.flush();
