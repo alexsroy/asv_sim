@@ -6,6 +6,7 @@ add_executable(asv_tests
   csv_frame_sink_test.cpp
   view_transform_test.cpp
   sensor_test.cpp
+  cpa_test.cpp
 )
 
 target_link_libraries(asv_tests PRIVATE asv_core GTest::gtest_main)

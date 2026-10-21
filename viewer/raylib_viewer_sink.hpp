@@ -3,6 +3,7 @@
 #include <deque>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "asv/contact.hpp"
@@ -48,6 +49,9 @@ public:
     // measured position. It fades out over opts.contact_fade_s of sim time.
     void on_contact(const Contact& contact);
 
+    // Extra HUD line under the others (empty = hidden). Shown in red.
+    void set_status(std::string text) { status_ = std::move(text); }
+
     // True once the user closed the window (or pressed Esc).
     bool should_close();
 
@@ -73,6 +77,7 @@ private:
     ViewTransform view_;
     std::map<int, ShipView> ships_;
     std::deque<ContactView> contacts_;
+    std::string status_;
     Frame last_frame_;  // latest frame of the primary vessel
     long frame_count_ = 0;
     bool closed_ = false;

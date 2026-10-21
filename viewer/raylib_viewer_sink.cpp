@@ -148,6 +148,7 @@ void RaylibViewerSink::draw() {
     if (nearest < std::numeric_limits<double>::max()) {
         DrawText(TextFormat("nearest contact = %.0f m", nearest), 10, 54, 18, ORANGE);
     }
+    if (!status_.empty()) DrawText(status_.c_str(), 10, 76, 18, RED);
 
     EndDrawing();
 }

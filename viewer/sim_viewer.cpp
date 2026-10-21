@@ -3,6 +3,7 @@
 #include <cstdlib>
 #include <exception>
 #include <fstream>
+#include <cstdio>
 #include <iostream>
 #include <optional>
 #include <variant>
@@ -10,6 +11,7 @@
 
 #include "asv/ais_sensor.hpp"
 #include "asv/contact.hpp"
+#include "asv/cpa.hpp"
 #include "asv/csv_frame_sink.hpp"
 #include "asv/heading_controller.hpp"
 #include "asv/los_guidance.hpp"
@@ -22,6 +24,11 @@ namespace {
 
 constexpr int kOwnShipId = 0;
 constexpr int kTargetId = 1;
+
+// Safety zone: flag a risk if the target will pass within this distance...
+constexpr double kCpaLimit = 30.0;   // [m]
+// ...within this time.
+constexpr double kTcpaLimit = 60.0;  // [s]
 
 // World points around each scripted waypoint (plus the start), padded so the
 // target's turns and overshoot stay inside the viewer window.
@@ -126,6 +133,20 @@ int main(int argc, char** argv) {
             };
             deliver(radar.poll(f.t));
             deliver(ais.poll(f.t));
+
+            // CPA against the target's TRUE state, for now. Once the tracker
+            // exists this should use the tracked estimate instead.
+            const CpaResult cpa = compute_cpa(s, target->state());
+            char buf[96];
+            if (collision_risk(cpa, kCpaLimit, kTcpaLimit)) {
+                std::snprintf(buf, sizeof buf, "COLLISION RISK: CPA %.0f m in %.0f s",
+                              cpa.dcpa, std::max(cpa.tcpa, 0.0));
+            } else if (cpa.closing) {
+                std::snprintf(buf, sizeof buf, "CPA %.0f m in %.0f s", cpa.dcpa, cpa.tcpa);
+            } else {
+                std::snprintf(buf, sizeof buf, "CPA: opening (range %.0f m)", cpa.range);
+            }
+            viewer.set_status(buf);
         }
         csv.on_frame(f);
         viewer.on_frame(f);
