@@ -49,6 +49,16 @@ public:
     // measured position. It fades out over opts.contact_fade_s of sim time.
     void on_contact(const Contact& contact);
 
+    // A tracked vessel: estimated position/velocity and position covariance.
+    struct TrackView {
+        double x = 0, y = 0;      // north, east [m]
+        double vx = 0, vy = 0;    // north, east [m/s]
+        double cov_xx = 0, cov_xy = 0, cov_yy = 0;
+    };
+
+    // Replace the set of tracks drawn (purple: 95% ellipse + 10 s velocity line).
+    void set_tracks(std::vector<TrackView> tracks) { tracks_ = std::move(tracks); }
+
     // Extra HUD line under the others (empty = hidden). Shown in red.
     void set_status(std::string text) { status_ = std::move(text); }
 
@@ -78,6 +88,7 @@ private:
     std::map<int, ShipView> ships_;
     std::deque<ContactView> contacts_;
     std::string status_;
+    std::vector<TrackView> tracks_;
     Frame last_frame_;  // latest frame of the primary vessel
     long frame_count_ = 0;
     bool closed_ = false;

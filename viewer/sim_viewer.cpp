@@ -14,6 +14,7 @@
 #include "asv/cpa.hpp"
 #include "asv/csv_frame_sink.hpp"
 #include "asv/heading_controller.hpp"
+#include "asv/kalman_track.hpp"
 #include "asv/los_guidance.hpp"
 #include "asv/radar_sensor.hpp"
 #include "asv/target_ship.hpp"
@@ -29,6 +30,10 @@ constexpr int kTargetId = 1;
 constexpr double kCpaLimit = 30.0;   // [m]
 // ...within this time.
 constexpr double kTcpaLimit = 60.0;  // [s]
+
+// Radar contacts must fall inside this Mahalanobis gate (chi-square, 2 dof,
+// 99%) to update the track.
+constexpr double kRadarGate2 = 9.21;
 
 // World points around each scripted waypoint (plus the start), padded so the
 // target's turns and overshoot stay inside the viewer window.
@@ -94,6 +99,9 @@ int main(int argc, char** argv) {
     CsvFrameSink csv(file);
     std::ofstream contacts_file("contacts.csv");
     ContactCsvWriter contacts_csv(contacts_file);
+    std::ofstream tracks_file("tracks.csv");
+    tracks_file << "t,x,y,vx,vy,cov_xx,cov_xy,cov_yy,truth_x,truth_y,truth_vx,truth_vy\n";
+    std::optional<KalmanTrack> track;
     RaylibViewerSink viewer(route, opts);
 
     const int n_max = static_cast<int>(600.0 / dt);
@@ -125,26 +133,52 @@ int main(int argc, char** argv) {
             const std::vector<TruthTarget> truth{{kTargetId, target->state()}};
             radar.update(f.t, s, truth);
             ais.update(f.t, s, truth);
+            // Placeholder association until the nearest-neighbour associator:
+            // one track, started on the first identified (AIS) contact. AIS is
+            // trusted by id; radar must pass the Mahalanobis gate, which is what
+            // keeps clutter from dragging the track around.
             auto deliver = [&](const std::vector<Contact>& batch) {
                 for (const auto& c : batch) {
                     contacts_csv.write(f.t, c);
                     viewer.on_contact(c);
+                    if (!track) {
+                        if (c.id != -1) track.emplace(c);
+                    } else if (c.id != -1 || track->gate_distance2(c) < kRadarGate2) {
+                        track->update(c);
+                    }
                 }
             };
             deliver(radar.poll(f.t));
             deliver(ais.poll(f.t));
 
-            // CPA against the target's TRUE state, for now. Once the tracker
-            // exists this should use the tracked estimate instead.
-            const CpaResult cpa = compute_cpa(s, target->state());
+            // CPA from the TRACKED estimate (what the ASV would really know),
+            // not from ground truth.
             char buf[96];
-            if (collision_risk(cpa, kCpaLimit, kTcpaLimit)) {
-                std::snprintf(buf, sizeof buf, "COLLISION RISK: CPA %.0f m in %.0f s",
-                              cpa.dcpa, std::max(cpa.tcpa, 0.0));
-            } else if (cpa.closing) {
-                std::snprintf(buf, sizeof buf, "CPA %.0f m in %.0f s", cpa.dcpa, cpa.tcpa);
+            if (!track) {
+                std::snprintf(buf, sizeof buf, "no track yet");
             } else {
-                std::snprintf(buf, sizeof buf, "CPA: opening (range %.0f m)", cpa.range);
+                const TrackEstimate est = track->estimate_at(f.t);
+                viewer.set_tracks({RaylibViewerSink::TrackView{
+                    est.kin.x, est.kin.y, est.kin.vx, est.kin.vy,
+                    est.P(0, 0), est.P(0, 1), est.P(1, 1)}});
+
+                const auto& truth_state = target->state();
+                const Kinematics truth_k = kinematics(truth_state);
+                tracks_file << f.t << ',' << est.kin.x << ',' << est.kin.y << ','
+                            << est.kin.vx << ',' << est.kin.vy << ',' << est.P(0, 0)
+                            << ',' << est.P(0, 1) << ',' << est.P(1, 1) << ','
+                            << truth_k.x << ',' << truth_k.y << ',' << truth_k.vx
+                            << ',' << truth_k.vy << '\n';
+
+                const CpaResult cpa = compute_cpa(kinematics(s), est.kin);
+                if (collision_risk(cpa, kCpaLimit, kTcpaLimit)) {
+                    std::snprintf(buf, sizeof buf, "COLLISION RISK: CPA %.0f m in %.0f s",
+                                  cpa.dcpa, std::max(cpa.tcpa, 0.0));
+                } else if (cpa.closing) {
+                    std::snprintf(buf, sizeof buf, "CPA %.0f m in %.0f s", cpa.dcpa, cpa.tcpa);
+                } else {
+                    std::snprintf(buf, sizeof buf, "CPA: opening (range %.0f m)", cpa.range);
+                }
             }
             viewer.set_status(buf);
         }
@@ -157,6 +191,7 @@ int main(int argc, char** argv) {
     }
     csv.flush();
     contacts_file.flush();
+    tracks_file.flush();
 
     viewer.run_until_closed();  // leave the final picture up until closed
     return 0;

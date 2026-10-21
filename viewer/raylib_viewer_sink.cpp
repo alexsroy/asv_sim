@@ -107,6 +107,34 @@ void RaylibViewerSink::draw() {
         }
     }
 
+    // Tracks: 95% position-uncertainty ellipse, centre mark, 10 s velocity line.
+    for (const auto& tr : tracks_) {
+        constexpr double kPi = 3.14159265358979323846;
+        constexpr double kChi2_95 = 5.991;  // 2 degrees of freedom
+        const double a = tr.cov_xx, b = tr.cov_xy, c = tr.cov_yy;
+        const double mid = 0.5 * (a + c);
+        const double rad = std::sqrt(0.25 * (a - c) * (a - c) + b * b);
+        const double major = std::sqrt(std::max(mid + rad, 0.0) * kChi2_95);
+        const double minor = std::sqrt(std::max(mid - rad, 0.0) * kChi2_95);
+        const double theta = 0.5 * std::atan2(2.0 * b, a - c);  // major axis, in (x, y)
+
+        constexpr int kSegments = 40;
+        Vector2 prev{};
+        for (int i = 0; i <= kSegments; ++i) {
+            const double phi = 2.0 * kPi * i / kSegments;
+            const double ex = major * std::cos(phi), ey = minor * std::sin(phi);
+            const double wx = tr.x + ex * std::cos(theta) - ey * std::sin(theta);
+            const double wy = tr.y + ex * std::sin(theta) + ey * std::cos(theta);
+            const Vector2 p = to_v2(view_.to_screen(wx, wy));
+            if (i > 0) DrawLineV(prev, p, PURPLE);
+            prev = p;
+        }
+        const Vector2 centre = to_v2(view_.to_screen(tr.x, tr.y));
+        const Vector2 ahead = to_v2(view_.to_screen(tr.x + tr.vx * 10.0, tr.y + tr.vy * 10.0));
+        DrawLineV(centre, ahead, PURPLE);
+        DrawCircleV(centre, 3.0f, PURPLE);
+    }
+
     // Ships: contacts first, primary last so it ends up on top.
     // For each ship, trail first, then the triangle.
     for (int pass = 0; pass < 2; ++pass) {

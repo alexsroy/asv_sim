@@ -7,6 +7,7 @@ add_executable(asv_tests
   view_transform_test.cpp
   sensor_test.cpp
   cpa_test.cpp
+  kalman_track_test.cpp
 )
 
 target_link_libraries(asv_tests PRIVATE asv_core GTest::gtest_main)
